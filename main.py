@@ -64,6 +64,16 @@ from run_blockchain_terraformer import terraform_blockchain
 
 
 load_dotenv()
+required_vars = ['WEB3_ALCHEMY_PROJECT_ID',
+                 'ETH_PRIVATE_KEY_BE_CAREFUL']
+should_quit = False
+
+for var in required_vars:
+    if var not in os.environ:
+        print(f"The {var} environment variable is missing. See README.md for instructions")
+        should_quit = True
+if should_quit:
+    sys.exit()
 
 
 @click.command()
@@ -219,7 +229,7 @@ load_dotenv()
 @click.option(
     "--blockchain",
     default="ethereum",
-    help="""A blockchain from the list. Blockchains not in this list do not have a deployed Fast Lane contract and 
+    help="""A blockchain from the list. Blockchains not in this list do not have a deployed Fast Lane contract and
     are not supported.""",
     type=click.Choice(["ethereum", "coinbase_base"]),
 )
@@ -775,9 +785,9 @@ def run(
                     """
                   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
                   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-    
+
                   Finished first iteration of data sync. Now starting main loop arbitrage search.
-    
+
                   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
                   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
                   """
