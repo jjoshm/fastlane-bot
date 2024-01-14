@@ -94,7 +94,7 @@ class _ConfigProviderAlchemy(ConfigProvider):
         super().__init__(network, **kwargs)
         # assert self.network.NETWORK == ConfigNetwork.NETWORK_ETHEREUM, f"Alchemy only supports Ethereum {self.network}"
         self.WEB3_ALCHEMY_PROJECT_ID = network.WEB3_ALCHEMY_PROJECT_ID
-        self.RPC_URL = f"{network.RPC_ENDPOINT}{self.WEB3_ALCHEMY_PROJECT_ID}"
+        self.RPC_URL = f"http://ethereum:8545"
         N = self.network
         self.connection = EthereumNetwork(
             network_id=N.NETWORK_ID,
