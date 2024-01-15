@@ -608,9 +608,12 @@ class TxHelpers:
             if "max fee per gas less than block base fee" in str(e):
                 try:
                     message = str(e)
+                    self.ConfigObj.logger.warning("\n---------------------------\n" + message + '\n---------------------------')
                     split1 = message.split("maxFeePerGas: ")[1]
                     split2 = split1.split(" baseFee: ")
+                    self.ConfigObj.logger.warning("no fix - split2: " + str(split2))
                     split2 = [split2[0].replace(",", ""), split2[1].replace("'}" ,"")]
+                    self.ConfigObj.logger.warning("with fix - split2: " + str(split2))
                     split_baseFee = int(int(split2[1].split(" (supplied gas")[0]))
                     split_maxPriorityFeePerGas = int(
                         int(split2[0]) * self.ConfigObj.DEFAULT_GAS_PRICE_OFFSET
