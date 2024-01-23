@@ -30,7 +30,7 @@ from web3.types import TxReceipt
 # from fastlane_bot.tools.cpc import ConstantProductCurve
 from fastlane_bot.config import Config
 from fastlane_bot.data.abi import *  # TODO: PRECISE THE IMPORTS or from .. import abi
-from fastlane_bot.utils import num_format, log_format, num_format_float
+from fastlane_bot.utils import num_format, log_format, num_format_float, int_prefix
 
 
 @dataclass
@@ -608,18 +608,12 @@ class TxHelpers:
             if "max fee per gas less than block base fee" in str(e):
                 try:
                     message = str(e)
-                    self.ConfigObj.logger.warning("\n---------------------------\n" + message + '\n---------------------------')
-                    split1 = message.split("maxFeePerGas: ")[1]
-                    split2 = split1.split(" baseFee: ")
-                    self.ConfigObj.logger.warning("no fix - split2: " + str(split2))
-                    split2 = [split2[0].replace(",", ""), split2[1].replace("'}" ,"")]
-                    self.ConfigObj.logger.warning("with fix - split2: " + str(split2))
-                    split_baseFee = int(int(split2[1].split(" (supplied gas")[0]))
+                    baseFee = int_prefix(message.split("baseFee: ")[1])
                     transaction = self.construct_contract_function(
                         routes=routes,
                         src_amt=src_amt,
                         src_address=src_address,
-                        gas_price=split_baseFee,
+                        gas_price=baseFee,
                         max_priority=max_priority,
                         nonce=nonce,
                         flashloan_struct=flashloan_struct,
@@ -629,7 +623,9 @@ class TxHelpers:
                         f"[helpers.txhelpers.build_transaction_with_gas] (***1***) \n"
                         f"Error when building transaction, this is expected to happen occasionally, discarding. Exception: {e.__class__.__name__} {e}"
                     )
+                    return None
             else:
+                self.ConfigObj.logger.info(f"gas_price = {gas_price}, max_priority = {max_priority}")
                 self.ConfigObj.logger.warning(
                     f"[helpers.txhelpers.build_transaction_with_gas] (***2***) \n"
                     f"Error when building transaction, this is expected to happen occasionally, discarding. Exception: {e.__class__.__name__} {e}"
@@ -715,6 +711,11 @@ class TxHelpers:
 
         if self.ConfigObj.NETWORK == self.ConfigObj.NETWORK_TENDERLY:
             self.wallet_address = self.ConfigObj.BINANCE14_WALLET_ADDRESS
+
+        if "tenderly" in self.web3.provider.endpoint_uri:
+            print("Tenderly network detected: Manually setting maxFeePerFas and maxPriorityFeePerGas")
+            max_gas_price = 3
+            max_priority_fee = 3
 
         if self.ConfigObj.NETWORK in ["ethereum", "coinbase_base"]:
             tx_details = {
@@ -961,13 +962,11 @@ class TxHelpers:
             if "max fee per gas less than block base fee" in str(e):
                 try:
                     message = str(e)
-                    split1 = message.split('maxFeePerGas: ')[1]
-                    split2 = split1.split(' baseFee: ')
-                    split_baseFee = int(int(split2[1].split(" (supplied gas")[0]))
+                    baseFee = int_prefix(message.split("baseFee: ")[1])
                     approve_tx = token_contract.functions.approve(self.arb_contract.address,
                                                                   approval_amount).build_transaction(
                         self.build_tx(
-                            base_gas_price=split_baseFee, max_priority_fee=max_priority, nonce=self.get_nonce()
+                            base_gas_price=baseFee, max_priority_fee=max_priority, nonce=self.get_nonce()
                         )
                     )
                 except Exception as e:
