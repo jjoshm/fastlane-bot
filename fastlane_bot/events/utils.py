@@ -20,12 +20,14 @@ import pandas as pd
 import requests
 from hexbytes import HexBytes
 from joblib import Parallel, delayed
-from web3 import Web3
+from web3 import AsyncWeb3, Web3
 from web3.datastructures import AttributeDict
 
 from fastlane_bot import Config
 from fastlane_bot.bot import CarbonBot
+from fastlane_bot.config.connect import NetworkBase
 from fastlane_bot.config.multiprovider import MultiProviderContractWrapper
+from fastlane_bot.data.abi import FAST_LANE_CONTRACT_ABI
 from fastlane_bot.events.exceptions import ReadOnlyException
 from fastlane_bot.events.interface import QueryInterface
 from fastlane_bot.events.managers.manager import Manager
@@ -33,6 +35,7 @@ from fastlane_bot.events.managers.manager import Manager
 from fastlane_bot.events.multicall_utils import encode_token_price
 from fastlane_bot.events.pools import CarbonV1Pool
 from fastlane_bot.helpers import TxHelpers
+from fastlane_bot.utils import safe_int
 
 
 def filter_latest_events(
@@ -244,7 +247,7 @@ def get_static_data(
     blockchain: str,
     static_pool_data_filename: str,
     read_only: bool = False,
-) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, str], Dict[str, str]]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, str], Dict[str, str], Dict[str, str]]:
     """
     Helper function to get static pool data, tokens, and Uniswap v2 event mappings.
 
@@ -289,6 +292,12 @@ def get_static_data(
     uniswap_v3_event_mappings_df = read_csv_file(uniswap_v3_filepath)
     uniswap_v3_event_mappings = dict(
         uniswap_v3_event_mappings_df[["address", "exchange"]].values
+    )
+    # Read Solidly v2 event mappings and tokens
+    solidly_v2_filepath = os.path.join(base_path, "solidly_v2_event_mappings.csv")
+    solidly_v2_event_mappings_df = read_csv_file(solidly_v2_filepath)
+    solidly_v2_event_mappings = dict(
+        solidly_v2_event_mappings_df[["address", "exchange"]].values
     )
 
     tokens_filepath = os.path.join(base_path, "tokens.csv")
@@ -371,6 +380,7 @@ def get_static_data(
         tokens,
         uniswap_v2_event_mappings,
         uniswap_v3_event_mappings,
+        solidly_v2_event_mappings,
     )
 
 
@@ -561,6 +571,7 @@ def get_config(
     flashloan_tokens: str,
     tenderly_fork_id: str = None,
     self_fund: bool = False,
+    rpc_url: str = None,
 ) -> Config:
     """
     Gets the config object.
@@ -583,6 +594,8 @@ def get_config(
         The Tenderly fork ID, by default None
     self_fund : bool
         The bot will default to using flashloans if False, otherwise it will attempt to use funds from the wallet.
+    rpc_url : str, optional
+        The RPC URL to use, by default None
     Returns
     -------
     Config
@@ -609,6 +622,20 @@ def get_config(
             self_fund=self_fund,
         )
         cfg.logger.info("[events.utils.get_config] Using mainnet config")
+
+    if rpc_url:
+        cfg.w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 60}))
+        cfg.w3_async = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(rpc_url))
+        if 'tenderly' in rpc_url:
+            cfg.NETWORK = cfg.NETWORK_TENDERLY
+        cfg.WEB3_ALCHEMY_PROJECT_ID = rpc_url.split("/")[-1]
+        cfg.RPC_ENDPOINT = rpc_url.replace(cfg.WEB3_ALCHEMY_PROJECT_ID, "")
+        cfg.RPC_URL = rpc_url
+        cfg.BANCOR_ARBITRAGE_CONTRACT = cfg.w3.eth.contract(
+            address=cfg.w3.to_checksum_address(cfg.network.FASTLANE_CONTRACT_ADDRESS),
+            abi=FAST_LANE_CONTRACT_ABI,
+        )
+
     cfg.LIMIT_BANCOR3_FLASHLOAN_TOKENS = limit_bancor3_flashloan_tokens
     cfg.DEFAULT_MIN_PROFIT_GAS_TOKEN = Decimal(default_min_profit_gas_token)
     cfg.GAS_TKN_IN_FLASHLOAN_TOKENS = (
@@ -1271,7 +1298,6 @@ def get_latest_events(
 
     # Filter out the latest events per pool, save them to disk, and update the pools
     latest_events = filter_latest_events(mgr, events)
-
     if mgr.tenderly_fork_id:
         if tenderly_events:
             latest_tenderly_events = filter_latest_events(mgr, tenderly_events)
@@ -1329,34 +1355,23 @@ def get_start_block(
     Returns
     -------
     Tuple[int, int or None]
-        The starting block number.
+        The starting block number and the block number to replay from.
 
     """
-    if replay_from_block:
-        return (
-            replay_from_block - 1
-            if last_block != 0
-            else replay_from_block - reorg_delay - alchemy_max_block_fetch
-        ), replay_from_block
-    elif mgr.tenderly_fork_id:
-        # connect to the Tenderly fork and get the latest block number
-        from_block = mgr.w3_tenderly.eth.block_number
-        return (
-            max(block["last_updated_block"] for block in mgr.pool_data) - reorg_delay
-            if last_block != 0
-            else from_block - reorg_delay - alchemy_max_block_fetch
-        ), from_block
+    if last_block == 0:
+        if replay_from_block:
+            return replay_from_block - reorg_delay - alchemy_max_block_fetch, replay_from_block
+        elif mgr.tenderly_fork_id:
+            return mgr.w3_tenderly.eth.block_number - reorg_delay - alchemy_max_block_fetch, mgr.w3_tenderly.eth.block_number
+        else:
+            return mgr.web3.eth.block_number - reorg_delay - alchemy_max_block_fetch, None
     else:
-        current_block = mgr.web3.eth.block_number
-        return (
-            (
-                max(block["last_updated_block"] for block in mgr.pool_data)
-                - reorg_delay
-                if last_block != 0
-                else current_block - reorg_delay - alchemy_max_block_fetch
-            ),
-            None,
-        )
+        if replay_from_block:
+            return replay_from_block - 1, replay_from_block
+        elif mgr.tenderly_fork_id:
+            return safe_int(max(block["last_updated_block"] for block in mgr.pool_data)) - reorg_delay, mgr.w3_tenderly.eth.block_number
+        else:
+            return safe_int(max(block["last_updated_block"] for block in mgr.pool_data)) - reorg_delay, None
 
 
 def get_tenderly_block_number(tenderly_fork_id: str) -> int:
@@ -1912,11 +1927,24 @@ def handle_static_pools_update(mgr: Any):
             for k, v in mgr.uniswap_v3_event_mappings.items()
         ]
     )
+    solidly_v2_event_mappings = pd.DataFrame(
+        [
+            {"address": k, "exchange_name": v}
+            for k, v in mgr.solidly_v2_event_mappings.items()
+        ]
+    )
     all_event_mappings = (
-        pd.concat([uniswap_v2_event_mappings, uniswap_v3_event_mappings])
+        pd.concat([uniswap_v2_event_mappings, uniswap_v3_event_mappings, solidly_v2_event_mappings])
         .drop_duplicates("address")
         .to_dict(orient="records")
     )
+    if "uniswap_v2_pools" not in mgr.static_pools:
+        mgr.static_pools["uniswap_v2_pools"] = []
+    if "uniswap_v3_pools" not in mgr.static_pools:
+        mgr.static_pools["uniswap_v3_pools"] = []
+    if "solidly_v2_pools" not in mgr.static_pools:
+        mgr.static_pools["solidly_v2_pools"] = []
+
     for ex in mgr.forked_exchanges:
         if ex in mgr.exchanges:
             exchange_pools = [
@@ -2040,17 +2068,8 @@ def check_and_approve_tokens(tokens: List, cfg) -> bool:
     :param cfg: the config object
 
     """
-    _tokens = []
-    for tkn in tokens:
-        # If the token is a token key, get the address from the CHAIN_FLASHLOAN_TOKENS dict in the network.py config file
-        if "-" in tkn:
-            try:
-                _tokens.append(cfg.CHAIN_FLASHLOAN_TOKENS[tkn])
-            except KeyError:
-                cfg.logger.info(f"could not find token address for tkn: {tkn}")
-        else:
-            _tokens.append(tkn)
-    tokens = _tokens
+
+    tokens = [tkn for tkn in tokens if tkn != cfg.NATIVE_GAS_TOKEN_ADDRESS]
 
     self_funding_warning_sequence(cfg=cfg)
     tx_helpers = TxHelpers(ConfigObj=cfg)
@@ -2073,7 +2092,4 @@ def check_and_approve_tokens(tokens: List, cfg) -> bool:
     unapproved_tokens = find_unapproved_tokens(
         tokens=unapproved_tokens, cfg=cfg, tx_helpers=tx_helpers
     )
-    if len(unapproved_tokens) == 0:
-        return True
-    else:
-        return False
+    return len(unapproved_tokens) == 0

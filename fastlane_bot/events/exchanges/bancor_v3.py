@@ -30,16 +30,21 @@ class BancorV3(Exchange):
     def get_abi(self):
         return BANCOR_V3_POOL_COLLECTION_ABI
 
+    @property
+    def get_factory_abi(self):
+        # Not used for Bancor V3
+        return BANCOR_V3_POOL_COLLECTION_ABI
+
     def get_events(self, contract: Contract) -> List[Type[Contract]]:
         return [contract.events.TradingLiquidityUpdated]
 
-    def get_fee(self, address: str, contract: Contract) -> Tuple[str, float]:
+    async def get_fee(self, address: str, contract: Contract) -> Tuple[str, float]:
         return "0.000", 0.000
 
-    def get_tkn0(self, address: str, contract: Contract, event: Any) -> str:
+    async def get_tkn0(self, address: str, contract: Contract, event: Any) -> str:
         return self.BNT_ADDRESS
 
-    def get_tkn1(self, address: str, contract: Contract, event: Any) -> str:
+    async def get_tkn1(self, address: str, contract: Contract, event: Any) -> str:
         return (
             event["args"]["pool"]
             if event["args"]["pool"] != self.BNT_ADDRESS
